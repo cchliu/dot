@@ -6,13 +6,12 @@
 #
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 import logging
 from dot import cfg 
 from dot import log
 log.early_init_log(logging.DEBUG)
-
+from dot.controller import controller
 from dot.base.app_manager import AppManager
 
 
@@ -29,12 +28,14 @@ def main(args=None, prog=None):
     logger = logging.getLogger(__name__)
 
     app_lists = CONF.app
+    # Always run controller application.
+    app_lists += ['dot.controller.controller']
     print app_lists 
     app_mgr = AppManager.get_instance()
     app_mgr.load_apps(app_lists)
     services = []
     services.extend(app_mgr.instantiate_apps())
-
+    
     #try:
     #    hub.joinall(services)
     #except KeyboardInterrupt:
