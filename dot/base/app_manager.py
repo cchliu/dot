@@ -11,7 +11,9 @@ import logging
 import itertools
 import inspect
 
+from dot import cfg
 from dot import utils
+from dot.lib import hub
 from dot.controller.handler import register_instance
 
 LOG = logging.getLogger('dot.base.app_manager')
@@ -61,9 +63,19 @@ class DotApp(object):
         self.event_handlers = {}
         #key:ev_cls, value:a list of observers (app.name)
         self.event_observers = {}
+        self.threads = []
+
+        self.events = hub.Queue(128)
+        self._events_sem = hub.BoundedSemaphore(self.events.maxsize)
+
+        self.logger = logging.getLogger(self.name)
+        self.CONF = cfg.CONF
+
+        self.is_active = True
 
     def start(self):
-        pass
+        # Hook that is called after startup initialization is done.
+        self.threads.append(hub.spawn(self._event_loop))
 
     def register_handler(self, ev_cls, handler):
         assert callable(handler)
@@ -83,7 +95,59 @@ class DotApp(object):
     def unregister_observer(self, ev_cls, name):
         self.event_observers[ev_cls].remove(name)
 
+    def get_handlers(self, ev):
+        """Return a list of handlers for the specific event.
 
+        :param ev: The event to handle.
+        """
+        ev_cls = ev.__class__
+        handlers = self.event_handlers.get(ev_cls, [])
+        return handlers
+
+    def _event_loop(self):
+        while self.is_active or not self.events.empty():
+            ev = self.events.get()
+            self._events_sem.release()
+            handlers = self.get_handlers(ev)
+            for handler in handlers:
+                try:
+                    handler(ev)
+                except hub.TaskExit:
+                    # Normal exit.
+                    # Propagate upwards, so we leave the event loop.
+                    raise
+                except:
+                    LOG.exception('%s: Exception occurred during handler processing. '
+                            'Backtrace from offending handler '
+                            '[%s] servicing event [%s] follows. ',
+                            self.name, handler.__name__, ev.__class__.__name__)
+
+    def get_observers(self, ev):
+        observers = [k for k in self.event_observers.get(ev.__class__, set())]
+        return observers
+
+    def _send_event(self, ev):
+        self._events_sem.acquire()
+        self.events.put(ev)
+
+    def send_event(self, name, ev):
+        """
+        Send the specified event to the detection App instance by name.
+        """
+        if name in SERVICE_BRICKS:
+            self.logger.debug("EVENT %s->%s %s", self.name, name, ev.__class__.__name__)
+            SERVICE_BRICKS[name]._send_event(ev)
+        else:
+            self.logger.debug("EVENT %s->%s %s", self.name, name, ev.__class__.__name__)
+
+    def send_event_to_observers(self, ev):
+        """
+        Send the specified event to all observers of this Event.
+        """
+        for observer in self.get_observers(ev):
+            self.send_event(observer, ev)
+
+    
 class AppManager(object):
     # singleton
     _instance = None
@@ -166,3 +230,10 @@ class AppManager(object):
         # between different applications.
         self._update_bricks()
         self.report_bricks()
+
+        threads = []
+        for app in self.applications.values():
+            t = app.start()
+            if t is not None:
+                threads.append(t)
+        return threads

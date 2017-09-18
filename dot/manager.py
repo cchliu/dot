@@ -7,6 +7,9 @@
 import sys
 import os
 
+from dot.lib import hub
+hub.patch(thread=False, select=False)
+
 import logging
 from dot import cfg 
 from dot import log
@@ -26,6 +29,7 @@ def main(args=None, prog=None):
     CONF(args=args, prog=prog)
     log.init_log()
     logger = logging.getLogger(__name__)
+    hub.patch(thread=True)
 
     app_lists = CONF.app
     # Always run controller application.
@@ -35,12 +39,12 @@ def main(args=None, prog=None):
     app_mgr.load_apps(app_lists)
     services = []
     services.extend(app_mgr.instantiate_apps())
-    
-    #try:
-    #    hub.joinall(services)
-    #except KeyboardInterrupt:
-    #    logger.debug("Keyboard Interrupt received. "
-    #                "Closing DDoS application manager...")
+    print services 
+    try:
+        hub.joinall(services)
+    except KeyboardInterrupt:
+        logger.debug("Keyboard Interrupt received. "
+                    "Closing DDoS application manager...")
     #finally:
     #    app_mgr.close()
 
